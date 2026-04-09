@@ -6,6 +6,7 @@ import scrublet as scr
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import sparse
 from scipy.stats import median_abs_deviation
 import numpy as np
 
@@ -88,6 +89,7 @@ def per_sample_qc(adata, sample_name):
     sc.pl.scatter(adata, x="total_counts", y="pct_counts_mt", save=f"_total_counts_vs_pct_counts_mt_{sample_name}.png")
     
     print(f"Figures saved for sample {sample_name} QC metrics.")
+    return adata
     
 def iqr_bounds(series, multiplier=1.5):
     # Calculate the interquartile range (IQR) and determine the lower and upper bounds for outliers based on the IQR method. The multiplier parameter determines how far from the IQR the bounds are set 
@@ -183,7 +185,36 @@ def identify_doublets(adata, expected_doublet_rate=0.06, sample_name=None, umap=
     return adata
     
     
-    
+def pct_expressed_by_group(adata, groupby, layer=None):
+    X = adata.layers[layer] if layer is not None else adata.X
+    if sparse.issparse(X):
+        X = X.tocsr()
+
+    groups = adata.obs[groupby].astype(str)
+    result = {}
+
+    for g in sorted(groups.unique()):
+        idx_in = np.where(groups.values == g)[0]
+        idx_out = np.where(groups.values != g)[0]
+
+        X_in = X[idx_in]
+        X_out = X[idx_out]
+
+        if sparse.issparse(X):
+            pct_in = np.asarray((X_in > 0).mean(axis=0)).ravel()
+            pct_out = np.asarray((X_out > 0).mean(axis=0)).ravel()
+        else:
+            pct_in = (X_in > 0).mean(axis=0)
+            pct_out = (X_out > 0).mean(axis=0)
+
+        result[g] = {
+            "pct_in": pct_in,
+            "pct_out": pct_out
+        }
+
+    return result
+
+
     
 # Main analysis workflow
 #########################################################################
@@ -195,11 +226,10 @@ def identify_doublets(adata, expected_doublet_rate=0.06, sample_name=None, umap=
 adatas = []
 for sample, srr_id in samples.items():
     h5_path = os.path.join(CELLRANGER_OUTDIR, sample, "outs", "filtered_feature_bc_matrix.h5")
-    adata = sc.read_10x_mtx(h5_path, var_names="gene_symbols")
+    adata = sc.read_10x_h5(h5_path, var_names="gene_symbols")
     adata.var_names_make_unique() # make gene names unique by adding a suffix to duplicate names, which is important for downstream analyses that require unique gene identifiers. This step ensures that each gene can be uniquely identified and prevents issues that may arise from having duplicate gene names in the dataset.
     adata.obs["sample_id"] = srr_id
     adata.obs["condition"] = sample
-    adatas.append(adata)
 
     # for each adata, comput qc, remove outliers. Then concatenate the adatas together for downstream analyses. 
     adata = per_sample_qc(adata, sample)
@@ -287,7 +317,7 @@ print(f"Shape of highly variable gene matrix: {adata.shape}")
 # SCALE ?
 # Remove background noise? better clustering?
 # sc.pp.regress_out(adata, ["total_counts", "pct_counts_mt"])
-
+adata_markers = adata.copy()
 sc.pp.scale(adata, max_value=10) # scale the data to unit variance and zero mean, with a maximum value of 10 to prevent extreme values from dominating the analysis. This step is important because it ensures that all genes are on the same scale and that highly expressed genes do not dominate the downstream analyses such as PCA and clustering. Scaling makes analyses more sensitive to subtle differences in gene expression across cells.
 
 
@@ -299,9 +329,9 @@ sc.pp.scale(adata, max_value=10) # scale the data to unit variance and zero mean
 print("\n\nRun PCA and visualize the variance explained by each principal component")
 sc.pp.pca(adata, n_comps=50, svd_solver="arpack") 
 # sc.tl.pca(adata, svd_solver="arpack") This version is deprecated? use sc.pp.pca instead
-sc.pl.pca_variance_ratio(adata, log=True, save="6.png")
+sc.pl.pca_variance_ratio(adata, log=True, save=".png")
 
-sc.pl.pca_overview(adata, save="6.png")
+sc.pl.pca_overview(adata, save=".png")
 
 # Elbow plot to show variance explained by each principal component (first 40 PCs)
 variance = adata.uns['pca']['variance'][:40]
@@ -339,19 +369,19 @@ for res in resolutions:
     )
     
 print(f"\nResolution table: \n{pd.DataFrame(res_table)}")
+
 # Choose resolution
 # -----------------------------------------------------------------------------
-# choose a resolution based on the number of clusters and their sizes. A resolution of 1.0 seems to give a reasonable number of clusters (10) with a good balance between cluster sizes (largest cluster has 100 cells, average cluster size is 50 cells, and smallest cluster has 20 cells).
-print("\n\nQuestion 8: Choose resolution")
+print("\n\nChoose resolution")
 chosen_res = 0.50
 print(f"\nChosen resolution: {chosen_res}")
 # print the number of clusters and their sizes for the chosen resolution
-print(adata.obs[f"leiden_{chosen_res}"].value_counts())
+print(f"Number of clusters: {adata.obs[f"leiden_{chosen_res}"].value_counts()}")
 
-# 9. UMAP embedding and plot cells
+# UMAP embedding and plot cells
 # ---------------------------------------------------------------------
 #https://scanpy.readthedocs.io/en/stable/tutorials/plotting/core.html
-print("\n\nQuestion 9: UMAP embedding and plot")
+print("\n\nUMAP embedding and plot")
 sc.tl.umap(adata)
 # colour by cluster
 # sc.pl.umap(adata, 
@@ -379,188 +409,84 @@ sc.pl.umap(adata, color=f"leiden_{chosen_res}", alpha=0.5, frameon=False, legend
 
 
 ##############################################################################
-# PART 4 -  Cluster Annotation
+# Cluster Annotation TODO: marker genes needed
 ################################################################################
 # followed: https://scanpy.readthedocs.io/en/stable/tutorials/plotting/core.html
-# 11. Identify marker genes for each cluster
+# Identify marker genes for each cluster
 # ---------------------------------------------------------------------
 print("\n\nIdentify marker genes for each cluster")
 sc.tl.dendrogram(adata, groupby=f"leiden_{chosen_res}")
 
-# gene_marker_dict = {
-#     "CD4+ T cells": ["CD3D", "CD3E", "IL7R", "CD4"],
-#     "CD8+ T cells": ["CD3D", "CD3E", "CD8A", "CD8B"],
-#     "NK cells": ["NKG7", "GNLY", "KLRD1"],
-#     "B cells": ["MS4A1", "CD79A", "CD79B"],
-#     "CD14+ Monocytes": ["CD14", "LYZ", "CST3"],
-#     "FCGR3A+ Monocytes": ["FCGR3A", "MS4A7"],
-#     "Dendritic cells": ["FCER1A", "CST3"],
-#     "Megakaryocytes": ["PPBP", "PF4"]
-# }
-
-# Create cluster-to-cell-type mapping based on marker gene expression
-
-# # Add cell type annotation to adata
-# adata.obs["cell_type"] = adata.obs[f"leiden_{chosen_res}"].astype(str).map(cluster_labels)
-
-# Create marker genes list for dotplot (ordered by cluster)
-# marker_genes_list = [
-#     ["CD3D", "CD3E", "IL7R", "CD4"],        # CD4+ T cells
-#     ["CD3D", "CD3E", "CD8A", "CD8B"],       # CD8+ T cells
-#     ["NKG7", "GNLY", "KLRD1"],              # NK cells
-#     ["MS4A1", "CD79A", "CD79B"],            # B cells
-#     ["CD14", "LYZ", "CST3"],                # CD14+ Monocytes
-#     ["FCGR3A", "MS4A7"],                    # FCGR3A+ Monocytes
-#     ["FCER1A", "CST3"],                     # Dendritic cells
-#     ["PPBP", "PF4"]                         # Megakaryocytes
-# ]
-
-# Flatten marker genes list
-# marker_genes = [gene for sublist in marker_genes_list for gene in sublist]
-
-# sc.pl.dotplot(
-#     adata,
-#     gene_marker_dict,
-#     groupby=f"leiden_{chosen_res}",
-#     dendrogram=True,
-#     save="_marker_genes_dotplot11.png"
-#     )
-
 sc.tl.rank_genes_groups(
-    adata,
+    adata_markers,
     groupby=f"leiden_{chosen_res}",
     method="wilcoxon",
-    n_genes=5,
-    use_raw=True,
-    key_added="rank_genes_groups"
+    use_raw=False,
+    pts=False,
+    key_added="cluster_markers"
     )
 
-sc.pl.rank_genes_groups_dotplot(
-    adata,
-    # var_names=gene_marker_dict,
-    n_genes=5,
-    groupby=f"leiden_{chosen_res}",
-    # dendrogram=True,
-    save="_top5_genes.png"
+pct_info = pct_expressed_by_group(adata_markers, groupby=f"leiden_{chosen_res}")
+
+
+# convert into one dataframe
+all_markers = []
+clusters = adata_markers.obs[f"leiden_{chosen_res}"].astype(str).unique().tolist()
+
+for cluster in sorted(clusters):
+    df = sc.get.rank_genes_groups_df(
+        adata_markers, 
+        group=cluster, 
+        key="cluster_markers"
+    ).copy()
+    
+    gene_to_idx = {gene: idx for idx, gene in enumerate(adata_markers.var_names)}
+    df["pct_in"] = df["names"].map(lambda gene: pct_info[cluster]["pct_in"][gene_to_idx[gene]])
+    df["pct_out"] = df["names"].map(lambda gene: pct_info[cluster]["pct_out"][gene_to_idx[gene]])
+    df["cluster"] = cluster
+    df["gene_idx"] = df["names"].map(gene_to_idx)
+    all_markers.append(df)
+    
+markers_df = pd.concat(all_markers, ignore_index=True)
+markers_df.to_csv(os.path.join(FIG_OUTPUTS_DIR, f"markers_with_pct_info.csv"), index=False)
+
+# Thresholds from the paper!
+filtered_markers_df = markers_df[
+    (markers_df["pct_in"] > 0.4) &
+    (markers_df["pct_out"] < 0.2) &
+    (markers_df["pvals_adj"] <= 0.01) &
+    (markers_df["logfoldchanges"] >= 1.0)
+].copy()
+
+# Rank and keep top 3 per cluster
+top3_markers = (
+    filtered_markers.sort_values(["cluster", "logfoldchanges"], ascending=[True, False]).head(3).reset_index(drop=True)
 )
 
-# sc.tl.filter_rank_genes_groups(
-#     adata,
-#     groupby=f"leiden_{chosen_res}",
-#     min_in_group_fraction=0.2, # only keep genes that are expressed in at least 25% of the cells in the cluster
-#     max_out_group_fraction=0.4, # only keep genes that are expressed in less than 50% of the cells in other clusters
-#     key="rank_genes_groups",
-#     key_added="filtered_rank_genes_groups"
-#     )
+filtered_markers_df.to_csv(os.path.join(FIG_OUTPUTS_DIR, f"filtered_markers_with_pct_info.csv"), index=False)
+top3_markers.to_csv(os.path.join(FIG_OUTPUTS_DIR, f"top3_markers.csv"), index=False)
 
-# sc.pl.rank_genes_groups_dotplot(
-#     adata,
-#     key="filtered_rank_genes_groups",
-#     n_genes=5,
-#     groupby=f"leiden_{chosen_res}",
-#     standard_scale="var",
-#     save="_filtered_top5_genes_dotplot11.png"
-# )
+print(f"Top 3 markers per cluster: \n{top3_markers[['cluster', 'names', 'logfoldchanges', 'pct_in', 'pct_out']]}")
 
-# does this give dot plot or heatmap?
-# sc.pl.rank_genes_groups(
-#     adata,
-#     n_genes=5,
-#     # sharey=False,
-#     save="_marker_genes11.png"
-#     )
 
-# Get top 5 genes across all clusters?
-# top_genes = [] #flat
-# names= adata.uns['rank_genes_groups']['names']
-# print(names.dtype)
-# print(names)
-
-# # Remove duplicates
-# top_genes = list(dict.fromkeys(top_genes))
-
-# # Dotplot of top 5 marker genes per cluster
-# sc.pl.dotplot(
-#     adata,
-#     top_genes,
-#     groupby=f"leiden_{chosen_res}",
-#     dendrogram=True,
-#     save="_top5_genes_dotplot11.png"
-# )
-
-# Add after: adata = adata[~adata.obs.outlier & ~adata.obs.mt_outlier].copy()
-
-# print("\n\nQC metrics by cluster (5 MADs filtering):")
-# print("\nCluster 5 statistics:")
-# cluster_5_mask = adata.obs[f"leiden_{chosen_res}"] == "5"
-# print(f"  Cells in cluster 5: {cluster_5_mask.sum()}")
-# print(f"  Mean total_counts: {adata.obs.loc[cluster_5_mask, 'total_counts'].mean():.1f}")
-# print(f"  Median total_counts: {adata.obs.loc[cluster_5_mask, 'total_counts'].median():.1f}")
-# print(f"  Mean n_genes_by_counts: {adata.obs.loc[cluster_5_mask, 'n_genes_by_counts'].mean():.1f}")
-# print(f"  Mean pct_counts_mt: {adata.obs.loc[cluster_5_mask, 'pct_counts_mt'].mean():.1f}")
-
-# print("\nOverall dataset statistics:")
-# print(f"  Mean total_counts: {adata.obs['total_counts'].mean():.1f}")
-# print(f"  Median total_counts: {adata.obs['total_counts'].median():.1f}")
-# print(f"  Mean n_genes_by_counts: {adata.obs['n_genes_by_counts'].mean():.1f}")
-# print(f"  Mean pct_counts_mt: {adata.obs['pct_counts_mt'].mean():.1f}")
-
-# 12. Assign cell type labels to each cluster
+# Plot expression of top 3 markers per cluster
 # ---------------------------------------------------------------------
-# print("\n\nQuestion 12: Assign cell type labels to each cluster")
-# # Map leiden clusters to cell type labels
-# # Based on resolution=0.50, we have 9 clusters.
-# cluster_labels = {
-#     "0": "CD4+ T cells", # high CD3D, no CD8A
-#     "1": "CD8+ T cells", # small CD8A  and CD8B (highest CD8A of all clusters) and no CD4
-#     "2": "CD4+ T cells", # high CD3D, no CD8A
-#     "3": "FCGR3A+ Monocytes", # high FCGR3A and moderate MS4A7, low CD14. (highest MS4A7 of all clusters)
-#     "4": "CD14+ Monocytes", # small/moderate CD14, with high LYZ and CST3. (highest CD14 of all clusters)
-#     "5": "Dendritic cells", # high FCER1A and CST3, low CD14 
-#     "6": "CD4+ T cells", # high CD3D, no CD8A,
-#     "7": "B cells", # high MS4A1, CD79A, CD79B
-#     "8": "NK cells" # high NKG7, GNLY and moderate KLRD1
-# }
+markers_list = top3_markers["names"].tolist()
 
-# adata.obs["cell_type"] = adata.obs[f"leiden_{chosen_res}"].map(cluster_labels).astype("category")
+sc.pl.dotplot(
+    adata_markers, 
+    var_names=markers_list, 
+    groupby=f"leiden_{chosen_res}", 
+    standard_scale="var",
+    dendogram=False,
+    use_raw=False, 
+    save="_top3_markers.png"
+)
 
-# sc.pl.dotplot(
-#     adata,
-#     gene_marker_dict,
-#     groupby="cell_type",
-#     dendrogram=True,
-#     save="_marker_genes_dotplot_cell_type12.png"
-#     )
+top3_dict = (
+    top3_markers.groupby("cluster")["names"]
+    .apply(list)
+    .to_dict()
+)
 
-# ax = sc.pl.heatmap(
-#     adata,
-#     gene_marker_dict,
-#     groupby=f"leiden_{chosen_res}",
-#     dendrogram=True,
-#     save="_marker_genes_heatmap12.png",
-#     cmap="viridis"
-# )
-
-# # 13. Plot UMAP with clusters colored by assigned cell type labels
-# # ---------------------------------------------------------------------
-# print("\n\nQuestion 13: Plot UMAP with clusters colored by assigned cell type labels")
-# # after assigning cell type labels to each cluster, create a new column in the adata.obs dataframe that contains the cell type labels for each cell. 
-
-# with plt.rc_context({"figure.figsize": (8,8)}):
-#     sc.pl.umap(adata, 
-#                color="cell_type", 
-#                save="_cell_types13.png",
-#                legend_loc="on data",
-#                legend_fontsize=12,
-#                legend_fontoutline=2,
-#                alpha=0.5,
-#                frameon=False,
-#                title="UMAP colored by assigned cell type labels") 
-
-# # Save the normalized and annotated AnnData object for future use
-# ##############################################################################
-# # adata.write(f"{OUTPUT_DIR}/adata.h5ad")
-
-# # Close the log file
-# log_file.close()
-
+print(top3_dict)

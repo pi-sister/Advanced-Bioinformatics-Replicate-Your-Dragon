@@ -12,10 +12,12 @@ set -euo pipefail
 #     exit 1
 # fi
 
-SAMPLES=("SRR24952452" "SRR24952453" "SRR24952454" "SRR25533465")
+# SAMPLES=("SRR24952452" "SRR24952453" "SRR24952454" "SRR25533465")
+SAMPLES=("SRR24952453_Post" "SRR24952454")
 # Output dir optional, defaults to data/
 OUTPUT_DIR="${1:-data/}"
-FASTQ_DIR="$OUTPUT_DIR/fastq"
+# FASTQ_DIR="$OUTPUT_DIR/fastq"
+FASTQ_DIR="$OUTPUT_DIR/fastq2"
 
 # Create output dir if it doesn't exist
 [ -d "$OUTPUT_DIR" ] || mkdir -p "$OUTPUT_DIR"

@@ -1,4 +1,4 @@
-#!bin/bash
+#!/bin/bash
 set -euo pipefail
 
 # Use args
@@ -15,12 +15,15 @@ GENOME_NAME="PitayaGenomic"
 GENOME_GTF="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/reference/PitayaGenomic.gtf"
 GENOME_FASTA="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/reference/PitayaGenomic.fa"
 FASTQ_DIR="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/fastq"
+# FASTQ_DIR="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/fastq2"
 REF_OUTPUT_DIR="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/reference/PitayaGenomic_cellranger_ref"
 
 # Sample IDs to process
 declare -A group_ids
-group_ids["SRR24952453"]="Post"
-group_ids["SRR24952454"]="CK"
+group_ids["SRR24952453"]="post"
+group_ids["SRR24952454"]="ck"
+
+ssris=("SRR24952453" "SRR24952454")
 
 # mkdir -p "$REF_OUTPUT_DIR"
 
@@ -48,13 +51,14 @@ fi
 ##########################################################
 echo "Preparing FASTQ files for cellranger..."
 for sample in "${!group_ids[@]}"; do
-    if [[ -f "${FASTQ_DIR}/${sample}_1.fastq" && -f "${FASTQ_DIR}/${sample}_2.fastq" && ! -f "${FASTQ_DIR}/${sample}_S1_L001_R1_001.fastq.gz" && ! -f "${FASTQ_DIR}/${sample}_S1_L001_R2_001.fastq.gz" ]]; then
+    if [[ ! -f "${FASTQ_DIR}/${sample}_S1_L001_R1_001.fastq.gz" && ! -f "${FASTQ_DIR}/${sample}_S1_L001_R2_001.fastq.gz" ]]; then
         echo "  Renaming and compressing ${sample}..."
-        pigz -p "${NTHREADS}" -c "${FASTQ_DIR}/${sample}_1.fastq" > "${FASTQ_DIR}/${sample}_S1_L001_R1_001.fastq.gz"
-        pigz -p "${NTHREADS}" -c "${FASTQ_DIR}/${sample}_2.fastq" > "${FASTQ_DIR}/${sample}_S1_L001_R2_001.fastq.gz"
+        pigz -p 4 -1 -c "${FASTQ_DIR}/${sample}_1.fastq" > "${FASTQ_DIR}/${sample}_S1_L001_R1_001.fastq.gz" &
+        pigz -p 4 -1 -c "${FASTQ_DIR}/${sample}_2.fastq" > "${FASTQ_DIR}/${sample}_S1_L001_R2_001.fastq.gz" &
     else
         echo "  FASTQ files for ${sample} are already prepared, skipping..."
     fi
 done
+wait
 echo "  FASTQ files are ready."
 

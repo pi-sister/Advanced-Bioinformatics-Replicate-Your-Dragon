@@ -7,5 +7,5 @@
 #SBATCH --time=12:00:00
 
 source /home/jamie.macdonald2/miniforge3/bin/activate /work/TALC/mdsc519_2026w/students/jamie/Dragon/Env_download
-bash /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/download_data.sh data
+# bash /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/download_data.sh data
 bash /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/convert_sra_to_fastq.sh
