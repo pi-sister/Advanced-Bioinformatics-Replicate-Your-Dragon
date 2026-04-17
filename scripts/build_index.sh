@@ -22,8 +22,9 @@ REF_OUTPUT_DIR="/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/reference/Pi
 declare -A group_ids
 group_ids["SRR24952453"]="post"
 group_ids["SRR24952454"]="ck"
+group_ids["SRR25533465"]="visium"
 
-ssris=("SRR24952453" "SRR24952454")
+ssris=("SRR24952453" "SRR24952454" "SRR25533465")
 
 # mkdir -p "$REF_OUTPUT_DIR"
 

@@ -9,15 +9,17 @@ import seaborn as sns
 from scipy import sparse
 from scipy.stats import median_abs_deviation
 import numpy as np
-
-seed(24032026)
+import warnings
+from matplotlib.lines import Line2D
+warnings.filterwarnings('ignore')
+seed(5042026)
 
 # User-defined parameters
 PROJECT_DIR = "/work/TALC/mdsc519_2026w/students/jamie/Dragon"
 CK_DIR = os.path.join(PROJECT_DIR, "data", "output", "cellranger", "SRR24952454")
 POST_DIR = os.path.join(PROJECT_DIR, "data", "output", "cellranger", "SRR24952453")
 CELLRANGER_OUTDIR = "/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/output/cellranger"
-FIG_OUTPUTS_DIR = os.path.join(PROJECT_DIR, "output", "figures")
+FIG_OUTPUTS_DIR = os.path.join(PROJECT_DIR, "output", "sc")
 
 # Configure scanpy settings
 sc.settings.figdir = os.path.join(FIG_OUTPUTS_DIR)
@@ -29,32 +31,32 @@ samples = {
     "post": "SRR24952453", "ck": "SRR24952454"
 }
 
-exp_cell_lookup = {
-    750: 0.004,
-    1500: 0.008,
-    2500: 0.016,
-    3500: 0.023,
-    4500: 0.031
-}
-
 # Functions for QC and filtering
 def get_expected_doublet_rate(n_cells):
     # Find the closest key in the lookup dictionary
-    expected_rate = 0.039
+    if n_cells <= 500:
+        return 0.004
+    elif n_cells <= 1000:
+        return 0.008
+    elif n_cells <= 2000:
+        return 0.016
+    elif n_cells <= 3000:
+        return 0.023
+    elif n_cells <= 4000:
+        return 0.031
+    elif n_cells <= 5000:
+        return 0.039
+    elif n_cells <= 6000:
+        return 0.046
+    elif n_cells <= 7000:
+        return 0.054
+    elif n_cells <= 8000:
+        return 0.061
+    elif n_cells <= 9000:
+        return 0.069
+    else:
+        return 0.076
     
-    if n_cells <= 750:
-        expected_rate = 0.004
-    elif n_cells <= 1500:
-        expected_rate = 0.008
-    elif n_cells <= 2500:
-        expected_rate = 0.016
-    elif n_cells <= 3500:
-        expected_rate = 0.023
-    elif n_cells <= 4500:
-        expected_rate = 0.031
-        
-    return expected_rate
-
 # Functions for QC and filtering
 def per_sample_qc(adata, sample_name):
     print(f"\nQC metrics for sample {sample_name}:")
@@ -88,7 +90,7 @@ def per_sample_qc(adata, sample_name):
     sc.pl.scatter(adata, x="total_counts", y="n_genes_by_counts", save=f"_total_counts_vs_n_genes_{sample_name}.png")
     sc.pl.scatter(adata, x="total_counts", y="pct_counts_mt", save=f"_total_counts_vs_pct_counts_mt_{sample_name}.png")
     
-    print(f"Figures saved for sample {sample_name} QC metrics.")
+    # print(f"Figures saved for sample {sample_name} QC metrics.")
     return adata
     
 def iqr_bounds(series, multiplier=1.5):
@@ -116,15 +118,15 @@ def per_sample_filtering(adata, sample_name, method="iqr", multiplier=1.5):
     if method == "iqr":
         for metric in ["total_counts", "n_genes_by_counts", "pct_counts_mt"]:
             lower_bound, upper_bound = iqr_bounds(filtered.obs[metric], multiplier)
-            print(f"  {metric}: [{lower_bound:.3f}, {upper_bound:.3f}]")
+            # print(f"  {metric}: [{lower_bound:.3f}, {upper_bound:.3f}]")
             filtered = filtered[
                 (filtered.obs[metric] >= lower_bound) &
                 (filtered.obs[metric] <= upper_bound)
             ].copy()
-        print(f"  Filtered number of cells: {filtered.n_obs}")
+        # print(f"  Filtered number of cells: {filtered.n_obs}")
         return filtered
     # 
-    # Here, we will use a more systematic approach based on MAD (Median Absolute Deviation) to identify outliers in the QC metrics and filter out low-quality cells.
+    # more systematic approach based on MAD (Median Absolute Deviation) to identify outliers in the QC metrics and filter out low-quality cells.
     for metric in ["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_in_top_20_genes"]:
         M = filtered.obs[metric]
         median = np.median(M)
@@ -147,33 +149,26 @@ def per_sample_filtering(adata, sample_name, method="iqr", multiplier=1.5):
         print(f"  Outliers based on pct_counts_mt: {filtered.obs.mt_outlier.value_counts()}")
         
         filtered = filtered[~filtered.obs.outlier & ~filtered.obs.mt_outlier].copy()
-        print(f"  Filtered number of cells: {filtered.n_obs}")
+        print(f"  Filtered number of cells ({sample_name}): {filtered.n_obs}")
         return filtered
     
 # scrublet to identify doublets - not sure if we have to do this since we already have the cellranger output, which should have already filtered out doublets. But could be worth trying to see if we can identify any additional doublets that were missed by cellranger.
 def identify_doublets(adata, expected_doublet_rate=0.06, sample_name=None, umap=False):
-    scrub = scr.Scrublet(adata.X, expected_doublet_rate=expected_doublet_rate, threshold=None)
-    if sample_name is not None:
-        sc.pl.scrublet_score_distribution(scrub, save=f"_{sample_name}.png")
+    scrub = scr.Scrublet(adata.X, expected_doublet_rate=expected_doublet_rate)
     doublet_scores, predicted_doublets = scrub.scrub_doublets()
     adata.obs["doublet_score"] = doublet_scores
     adata.obs["predicted_doublet"] = predicted_doublets
+    adata.uns["scrublet"] = scrub
     print(f"Predicted doublets: {predicted_doublets.sum()} out of {adata.n_obs} cells")
+    if sample_name is not None:
+        print(f"DEBUG: Doublet score distribution for sample {sample_name}")
+        # sc.pl.scrublet_score_distribution(adata, save=f"_doublet_score_distribution_{sample_name}.png")
+        scrub.plot_histogram()
+        plt.savefig(f"{FIG_OUTPUTS_DIR}/doublet_score_distribution_{sample_name}.png", bbox_inches='tight', dpi=150)
+        plt.close()
+    if umap:
+        sc.pl.umap(adata, color=['doublet_score', 'predicted_doublet'], save=f"_doublet_{sample_name}.png")
     # TODO: finish the inspection and choice of doublet threshold
-#     if umap:
-#         tmp = adata.copy()
-#         sc.pp.normalize_total(tmp, target_sum=1e4, inplace=True)
-#         sc.pp.log1p(tmp)
-#         sc.pp.highly_variable_genes(tmp, n_top_genes=2000)
-#         tmp = tmp[:, tmp.var["highly_variable"]].copy()
-#         sc.pp.scale(tmp, max_value=10)
-#         sc.tl.pca(tmp)
-#         sc.pp.neighbors(tmp)
-#         sc.tl.umap(tmp)
-        
-#         tmp.obs["predicted_doublet"] = adata.obs["predicted_doublet"].astype(str) # convert to string for plotting
-#         sc.pl.umap(tmp, color=["predicted_doublet", "doublet_score"], save=f"doublet_viz_{sample_name}.png")
-
 #     adata.obs["possible_doublets"] = adata.obs["predicted_doublet"].copy()
     
 #     # stricter threshold for doublets
@@ -186,14 +181,27 @@ def identify_doublets(adata, expected_doublet_rate=0.06, sample_name=None, umap=
     
     
 def pct_expressed_by_group(adata, groupby, layer=None):
+    """ Helper function to calculate the in and out frequency by cluster
+
+    Args:
+        adata (AnnData): expression object
+        groupby (string): variable name to group by
+        layer (Bool, optional): Layer of AnnData with X. Defaults to None.
+
+    Returns:
+        dict: with percents in and out across all genes for each cluster
+    """
     X = adata.layers[layer] if layer is not None else adata.X
     if sparse.issparse(X):
         X = X.tocsr()
 
+    # groups is the cluster labels for each cell
     groups = adata.obs[groupby].astype(str)
     result = {}
 
+    # for each cluster
     for g in sorted(groups.unique()):
+        # index of cells in the cluster and outside the cluster
         idx_in = np.where(groups.values == g)[0]
         idx_out = np.where(groups.values != g)[0]
 
@@ -215,8 +223,8 @@ def pct_expressed_by_group(adata, groupby, layer=None):
     return result
 
 
-    
-# Main analysis workflow
+#########################################################################################
+# MAIN ANALYSES
 #########################################################################
 
 # Redirect all output to a log file
@@ -226,41 +234,44 @@ def pct_expressed_by_group(adata, groupby, layer=None):
 adatas = []
 for sample, srr_id in samples.items():
     h5_path = os.path.join(CELLRANGER_OUTDIR, sample, "outs", "filtered_feature_bc_matrix.h5")
-    adata = sc.read_10x_h5(h5_path, var_names="gene_symbols")
+    adata = sc.read_10x_h5(h5_path)
+    
+    # Use the feature names from the H5 file (usually the second column contains gene symbols)
+    # Check what columns exist and use the appropriate one
+    if "gene_symbols" in adata.var.columns:
+        adata.var_names = adata.var["gene_symbols"].values
+    elif "feature_name" in adata.var.columns:
+        adata.var_names = adata.var["feature_name"].values
+    else:
+        # If neither exists, keep the default (usually gene_ids)
+        print(f"  Available var columns: {adata.var.columns.tolist()}")
+    
     adata.var_names_make_unique() # make gene names unique by adding a suffix to duplicate names, which is important for downstream analyses that require unique gene identifiers. This step ensures that each gene can be uniquely identified and prevents issues that may arise from having duplicate gene names in the dataset.
     adata.obs["sample_id"] = srr_id
     adata.obs["condition"] = sample
 
     # for each adata, comput qc, remove outliers. Then concatenate the adatas together for downstream analyses. 
     adata = per_sample_qc(adata, sample)
-    adata.raw = adata.copy() # store the original data in the raw attribute of the adata object, so that we can use it later for plotting and other analyses. This is important because the filtering step changes the values of the genes, so we want to keep a copy of the original data for reference.
-    # Use more relaxed filtering criteria (3 MADs) to retain more cells for downstream analyses, as the paper does not specify the exact filtering criteria used. 
-    # This allows us to keep more cells in the dataset while still removing clear outliers that may represent low-quality cells or technical artifacts. We can always adjust the multiplier parameter later if we find that we are retaining too many low-quality cells or if we want to be more stringent in our filtering.
-    adata = per_sample_filtering(adata, sample, multiplier=3.0) 
+    
+    print(f"\nCells before filtering: {adata.n_obs}")
+    adata = per_sample_filtering(adata, sample, multiplier=1.5)
+    print(f"Cells after filtering: {adata.n_obs}") 
     adata.obs["filtered"] = True
     
     expected_doublet_rate = get_expected_doublet_rate(adata.n_obs)
-    adata = identify_doublets(adata, expected_doublet_rate=expected_doublet_rate)
+    adata = identify_doublets(adata, expected_doublet_rate=expected_doublet_rate, sample_name=sample)
     
     adatas.append(adata)
 
 adata = sc.concat(adatas, join="outer", label="sample_id", keys=list(samples.keys()))
+adata.obs_names_make_unique()
 
-#
 # Normalize the data
-# ---------------------------------------------------------------------
-print("\n\Normalizing the data")
-adata.raw = adata.copy() # store the original data in the raw attribute of the adata object, so that we can use it later for plotting and other analyses. This is important because the normalization step changes the values of the genes, so we want to keep a copy of the original data for reference.
 sc.pp.normalize_total(adata, target_sum=1e4, inplace=True)
 sc.pp.log1p(adata)
 
-print(str(adata.var.columns.tolist()))
-
 
 # Identify highly variable genes
-# ---------------------------------------------------------------------
-print("\n\Identifying highly variable genes")
-#https://training.galaxyproject.org/training-material/topics/single-cell/tutorials/scrna-scanpy-pbmc3k/tutorial.html
 sc.pp.highly_variable_genes(
     adata, # use the filtered adata?  to identify highly variable genes, as the normalization step does not change the variance of the genes, so we can use the original data to identify highly variable genes. (Get a warning when using normalized data) - flavor seurat expects normalized data, seurat_v3 expects raw counts data
     flavor="seurat",
@@ -272,65 +283,18 @@ sc.pp.highly_variable_genes(
     # min_disp=0.8,
     )
 sc.pl.highly_variable_genes(adata, save=".png")
-print(f"Number of highly variable genes: {adata.var['highly_variable'].sum()}")
+print(f"Highly variable genes: {adata.var['highly_variable'].sum()}")
 
-# adata = adata[:, adata.var["highly_variable"]].copy() # subset the normalized adata to only include the highly variable genes, as these are the genes that will be used for downstream analyses such as dimensionality reduction and clustering. This step is important because it reduces the dimensionality? of the data and focuses on the most informative genes. A lot of cells have zero counts for many genes, so including all genes would add a lot of noise to the data and make it harder to identify meaningful patterns. By selecting only the highly variable genes, we can improve the signal-to-noise ratio and enhance the ability to detect biologically relevant clusters and patterns in the data.
-
-# print(adata.var["highly_variable"].value_counts())
-# print(adata.var[adata.var["highly_variable"]].head())
-# print(f"Number of highly variable genes: {hvg.sum()}")
-
-# Calculate means and variances of genes for plotting
-# adata.var["means"] = np.array(adata.X.mean(axis=0)).flatten()
-# if hasattr(adata.X, 'toarray'):  # sparse matrix
-#     adata.var["variances"] = np.array(adata.X.toarray().var(axis=0)).flatten()
-# else:  # dense matrix
-#     adata.var["variances"] = np.array(adata.X.var(axis=0)).flatten()
-
-# print(adata.var["means"][:5]) # print the mean expression of the first 5 genes
-# print(adata.var["variances"][:5]) # print the variance of the first 5 genes
-print(adata.var) # print the variable names
-
-# plot mean vs variance of genes, highlighting the highly variable genes - DOESN'T WORK for flavor=seurat, would have to manually calculate or use seurat_v3.
-# sc.pp.highly_variable_genes(
-#     adata,
-#     flavor="seurat_v3",
-#     n_top_genes=2000
-# )
-# sns.scatterplot(
-#     x=adata.var["means"],
-#     y=adata.var["variances"],
-#     hue=adata.var["highly_variable"],
-#     palette={True: "red", False: "blue"},
-#     alpha=0.5
-# )
-# plt.xlabel("Mean expression", fontsize=14)
-# plt.ylabel("Variance", fontsize=14)
-# plt.legend(title="Highly Variable")
-# plt.title()
-# plt.savefig(f"{OUTPUT_DIR}/5-mean_vs_variance.png", bbox_inches='tight')
-
-
-adata = adata[:, adata.var["highly_variable"]].copy()
-print(f"Shape of highly variable gene matrix: {adata.shape}")
-
-# SCALE ?
-# Remove background noise? better clustering?
-# sc.pp.regress_out(adata, ["total_counts", "pct_counts_mt"])
 adata_markers = adata.copy()
-sc.pp.scale(adata, max_value=10) # scale the data to unit variance and zero mean, with a maximum value of 10 to prevent extreme values from dominating the analysis. This step is important because it ensures that all genes are on the same scale and that highly expressed genes do not dominate the downstream analyses such as PCA and clustering. Scaling makes analyses more sensitive to subtle differences in gene expression across cells.
+adata = adata[:, adata.var["highly_variable"]].copy()
+sc.pp.scale(adata, max_value=10)
 
 
-################################################################################
+#########################################################################################
 # Dimensionality Reduction and Clustering
-################################################################################
-# Run PCA and visualize the variance explained by each principal component
-# ---------------------------------------------------------------------
-print("\n\nRun PCA and visualize the variance explained by each principal component")
-sc.pp.pca(adata, n_comps=50, svd_solver="arpack") 
-# sc.tl.pca(adata, svd_solver="arpack") This version is deprecated? use sc.pp.pca instead
+#########################################################################################
+sc.pp.pca(adata, n_comps=50, svd_solver="arpack")
 sc.pl.pca_variance_ratio(adata, log=True, save=".png")
-
 sc.pl.pca_overview(adata, save=".png")
 
 # Elbow plot to show variance explained by each principal component (first 40 PCs)
@@ -345,19 +309,14 @@ plt.tight_layout()
 plt.savefig(f"{FIG_OUTPUTS_DIR}/pca_elbow_plot.png", bbox_inches='tight')
 plt.close()
 
-n_PCs = 6 # choose the number of PCs to use for downstream analyses based on the elbow plot and the variance explained by each PC. In this case, we can see that the first 4 PCs explain a significant amount of variance in the data, so we will use these for clustering and visualization.
+n_PCs = 5 # choose the number of PCs to use for downstream analyses
 
 # Construct kNN graph on pca and perform clustering using the Leiden algorithm
-# --------------------------------------------------------------------------------
-print("\n\nConstruct kNN graph and perform clustering using the Leiden algorithm")
 sc.pp.neighbors(adata, n_neighbors=10, n_pcs=n_PCs)
 resolutions = [0.25, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 res_table = []
 for res in resolutions:
     sc.tl.leiden(adata, resolution=res, key_added=f"leiden_{res}", n_iterations=2, flavor="igraph", directed=False)
-    print("Available obs columns:", adata.obs.columns.tolist())
-    print(f"Leiden clustering with resolution {res}:")
-    print(adata.obs[f"leiden_{res}"].value_counts())
     res_table.append(
         {
             "resolution": res,
@@ -370,18 +329,11 @@ for res in resolutions:
     
 print(f"\nResolution table: \n{pd.DataFrame(res_table)}")
 
-# Choose resolution
-# -----------------------------------------------------------------------------
-print("\n\nChoose resolution")
+# Choose resolution and compute UMAP
 chosen_res = 0.50
-print(f"\nChosen resolution: {chosen_res}")
-# print the number of clusters and their sizes for the chosen resolution
-print(f"Number of clusters: {adata.obs[f"leiden_{chosen_res}"].value_counts()}")
+groups = adata.obs[f"leiden_{chosen_res}"]
+print(f"Resolution: {chosen_res}, Clusters: {groups.nunique()}")
 
-# UMAP embedding and plot cells
-# ---------------------------------------------------------------------
-#https://scanpy.readthedocs.io/en/stable/tutorials/plotting/core.html
-print("\n\nUMAP embedding and plot")
 sc.tl.umap(adata)
 # colour by cluster
 # sc.pl.umap(adata, 
@@ -394,36 +346,28 @@ sc.tl.umap(adata)
 #         frameon=False,
 #         title=f"UMAP colored by Leiden clusters (resolution=1.0)",
 #         save="_clustering9.png")
-# colour by total UMI counts
-sc.pl.umap(adata, 
-        color="total_counts", 
-        frameon=False,
-        save="_total_counts.png")
-# colour by mitochondrial gene percentage    
+# Plot UMAP colored by different metrics
+sc.pl.umap(adata, color="total_counts", frameon=False, save="_total_counts.png")
 sc.pl.umap(adata, color="pct_counts_mt", frameon=False, save="_pct_counts_mt.png")
-
-# UMAP showing clusters for chosen resolution
-# ---------------------------------------------------------------------
-print("\n\nUMAP showing clusters for chosen resolution")
 sc.pl.umap(adata, color=f"leiden_{chosen_res}", alpha=0.5, frameon=False, legend_loc="on data", legend_fontsize=12, title=f"UMAP colored by Leiden clusters (resolution={chosen_res})", save=".png")
 
+# give cell cluster labels to the adata_markers object for marker discovery
+adata_markers.obs[f"leiden_{chosen_res}"] = adata.obs[f"leiden_{chosen_res}"].values
 
-##############################################################################
-# Cluster Annotation TODO: marker genes needed
-################################################################################
-# followed: https://scanpy.readthedocs.io/en/stable/tutorials/plotting/core.html
+
+# Cluster Annotation
+#########################################################################################
+
 # Identify marker genes for each cluster
-# ---------------------------------------------------------------------
-print("\n\nIdentify marker genes for each cluster")
-sc.tl.dendrogram(adata, groupby=f"leiden_{chosen_res}")
+sc.tl.dendrogram(adata_markers, groupby=f"leiden_{chosen_res}")
 
 sc.tl.rank_genes_groups(
     adata_markers,
     groupby=f"leiden_{chosen_res}",
     method="wilcoxon",
     use_raw=False,
-    pts=False,
-    key_added="cluster_markers"
+    pts=False, # manually calculate pct_in and pct_out later, as the default implementation does not work with sparse matrices and is very slow for large datasets.
+    key_added="cluster_markers" # store the results in adata.uns["cluster_markers"]
     )
 
 pct_info = pct_expressed_by_group(adata_markers, groupby=f"leiden_{chosen_res}")
@@ -440,6 +384,7 @@ for cluster in sorted(clusters):
         key="cluster_markers"
     ).copy()
     
+    # genes filtered by position
     gene_to_idx = {gene: idx for idx, gene in enumerate(adata_markers.var_names)}
     df["pct_in"] = df["names"].map(lambda gene: pct_info[cluster]["pct_in"][gene_to_idx[gene]])
     df["pct_out"] = df["names"].map(lambda gene: pct_info[cluster]["pct_out"][gene_to_idx[gene]])
@@ -460,7 +405,8 @@ filtered_markers_df = markers_df[
 
 # Rank and keep top 3 per cluster
 top3_markers = (
-    filtered_markers.sort_values(["cluster", "logfoldchanges"], ascending=[True, False]).head(3).reset_index(drop=True)
+    filtered_markers_df.sort_values(["cluster", "logfoldchanges"], ascending=[True, False])
+    .groupby('cluster', group_keys=False).head(3).reset_index(drop=True)
 )
 
 filtered_markers_df.to_csv(os.path.join(FIG_OUTPUTS_DIR, f"filtered_markers_with_pct_info.csv"), index=False)
@@ -473,20 +419,213 @@ print(f"Top 3 markers per cluster: \n{top3_markers[['cluster', 'names', 'logfold
 # ---------------------------------------------------------------------
 markers_list = top3_markers["names"].tolist()
 
-sc.pl.dotplot(
-    adata_markers, 
-    var_names=markers_list, 
-    groupby=f"leiden_{chosen_res}", 
-    standard_scale="var",
-    dendogram=False,
-    use_raw=False, 
-    save="_top3_markers.png"
+# axes = sc.pl.dotplot(
+#     adata_markers, 
+#     var_names=markers_list, 
+#     groupby=f"leiden_{chosen_res}", 
+#     standard_scale="var",
+#     # use_raw=False, 
+#     dendrogram=False,
+#     save="_top3_markers.png"
+# )
+
+cluster_col = f"leiden_{chosen_res}"
+
+# numeric cluster order
+cluster_order = sorted(adata_markers.obs[cluster_col].astype(int).unique())
+cluster_order_str = [str(x) for x in cluster_order]
+
+# enforce plotting order
+adata_markers.obs[cluster_col] = pd.Categorical(
+    adata_markers.obs[cluster_col].astype(str),
+    categories=cluster_order_str,
+    ordered=True
 )
 
+# sort top markers by numeric cluster, not string cluster
+top3_markers = top3_markers.copy()
+top3_markers["cluster"] = top3_markers["cluster"].astype(str)
+top3_markers["cluster_num"] = top3_markers["cluster"].astype(int)
+
+top3_markers = top3_markers.sort_values(
+    ["cluster_num", "logfoldchanges"],
+    ascending=[True, False]
+)
+
+# grouped var_names
 top3_dict = (
     top3_markers.groupby("cluster")["names"]
     .apply(list)
+    .reindex(cluster_order_str)
     .to_dict()
 )
 
+# Remove NaN values from the dictionary to avoid "float object is not iterable" error
+top3_dict = {k: v for k, v in top3_dict.items() if isinstance(v, list) and len(v) > 0}
+
+sc.pl.dotplot(
+    adata_markers,
+    var_names=top3_dict,
+    groupby=cluster_col,
+    standard_scale="var",
+    use_raw=False,
+    save="_top3_markers_.png"
+)
+
 print(top3_dict)
+
+
+# Plot expression of top 3 markers per cluster on UMAP
+top3_genes = top3_markers["names"].unique().tolist()
+
+# Create a grid of UMAP plots for each gene
+n_genes = len(top3_genes)
+n_cols = 5
+n_rows = (n_genes + n_cols - 1) // n_cols
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 4*n_rows), dpi=100)
+axes = axes.flatten() if n_genes > 1 else np.array([axes])
+
+for idx, gene in enumerate(top3_genes):
+    try:
+        sc.pl.umap(
+            adata_markers,
+            color=gene,
+            frameon=True,
+            title=f"{gene}",
+            ax=axes[idx],
+            show=False,
+            cmap="viridis"
+        )
+    except Exception as e:
+        print(f"Error plotting gene {gene}: {e}")
+        axes[idx].text(0.5, 0.5, f"Error plotting {gene}", ha='center', va='center')
+
+# Hide unused subplots
+for idx in range(n_genes, len(axes)):
+    axes[idx].axis('off')
+
+plt.tight_layout()
+plt.savefig(f"{FIG_OUTPUTS_DIR}/umap_top3_markers.png", bbox_inches='tight', dpi=150)
+plt.close()
+
+marker_panels = {
+    "Mesocarp": [
+        "HU08G02237", "HU11G01114", "HU09G01127", "HU06G01840",
+        "HU10G01409", "HU08G00805", "HU02G02701", "HU01G00649"
+    ],
+    "Exocarp": [
+        "HU07G01483", "HU03G02606", "HU01G01880",
+        "HU09G00039", "HU08G01941", "HU07G01714",
+        "HU03G00170", "HU06G01661", "HU08G01266"
+    ],
+    "Endocarp": [
+        "HU03G02180", "HU03G02824", "HU07G01763",
+        "HU01G02711", "HU08G01810", "HU06G02555"
+    ],
+    "Endocarp fiber": [
+        "HU05G00062", "HU05G00061", "HU10G00161", "HU07G02077"
+    ],
+    "Vascular bundle": [
+        "HU05G00061", "HU05G01893", "HU01G01937", "HU10G00163"
+    ],
+}
+
+highlighted_genes = ["HU08G01266", "HU06G02555", "HU07G02077", "HU08G02237", "HU10G00163"]
+
+# sc.tl.dendrogram(adata_markers, groupby=f"leiden_{chosen_res}")
+axes = sc.pl.dotplot(
+    adata_markers, 
+    marker_panels, 
+    groupby=f"leiden_{chosen_res}", 
+    # swap_axes=True,
+    # standard_scale="var",
+    use_raw=False,
+    show=False,
+    cmap="Greens"
+)
+print("Dotplot axes:", axes.keys())
+ax = axes["mainplot_ax"]
+for label in ax.get_xticklabels():
+    gene_name = label.get_text()
+    if gene_name in highlighted_genes:
+        label.set_color("#c60d61")
+        label.set_fontweight('bold')
+        
+# Add a legend for the highlighted genes
+legend_elements = [Line2D([0], [0], marker='o', color='w', label='ST Identified', markerfacecolor='#c60d61', markersize=10)]
+ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
+plt.tight_layout()
+plt.savefig(f"{FIG_OUTPUTS_DIR}/dotplot_highlighted.png", bbox_inches='tight', dpi=150)
+plt.close()
+
+# Assign cell types
+# ---------------------------------------------------------------------
+cluster_to_celltype = {
+    "0": "Mesocarp",
+    "1": "Endocarp",
+    "2": "Vascular bundle and ENF",
+    "3": "Exocarp",
+    "4": "Exocarp",
+    "5": "Mesocarp",
+    "6": "Mesocarp",
+    "7": "Mesocarp",
+    "8": "Mesocarp",
+    "9": "Mesocarp",
+    "10": "Mesocarp",
+    "11": "Endocarp",
+    "12": "Exocarp",
+    "13": "Exocarp",
+    "14": "Exocarp",
+}
+
+adata_markers.obs["cell_type"] = adata_markers.obs[f"leiden_{chosen_res}"].map(cluster_to_celltype)
+
+# Copy UMAP embedding from adata to adata_markers if it exists
+if 'X_umap' in adata.obsm:
+    adata_markers.obsm['X_umap'] = adata.obsm['X_umap']
+
+sc.pl.umap(adata_markers, color="cell_type", frameon=False, legend_loc="on data", legend_fontsize=12, title=f"UMAP colored by cell type", save="_cell_type.png")
+
+# Compare post and ck conditions
+# -------------------------------------------------------------------
+sc.pl.umap(adata_markers, color="condition", frameon=False, legend_loc="on data", legend_fontsize=12, ncols=2, save="_condition.png")
+
+post_ad = adata_markers[adata_markers.obs["condition"] == "post"].copy()
+ck_ad = adata_markers[adata_markers.obs["condition"] == "ck"].copy()
+
+#scanpy example on the "customizing scanpy plots" page
+ncols=2
+nrows=1
+figsize=4
+wspace=0.5
+fig, axs = plt.subplots(
+    nrows=nrows,
+    ncols=ncols,
+    figsize=(ncols*figsize+figsize+wspace+(ncols-1), nrows*figsize)
+)
+
+plt.subplots_adjust(wspace=wspace)
+sc.pl.umap(
+    post_ad, 
+    color=f"leiden_{chosen_res}", 
+    frameon=False, 
+    legend_loc="on data", 
+    legend_fontsize=12, 
+    title=f"Post condition",
+    ax=axs[0],
+    show=False
+)
+
+sc.pl.umap(
+    ck_ad, 
+    color=f"leiden_{chosen_res}", 
+    frameon=False, 
+    legend_loc="on data", 
+    legend_fontsize=12, 
+    title=f"Post condition",
+    ax=axs[1],
+    show=False
+)
+
+sc.pl.plot(show=False).figure.savefig(f"{FIG_OUTPUTS_DIR}/umap_comparison.png", bbox_inches='tight', dpi=150)

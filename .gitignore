@@ -1,7 +1,7 @@
 /.vscode
-/Env_download
+/Env_download/*
 /Env_files
 /SRR25533465.sra
 /data
 /slurm_outputs
-fasterq.tmp.n26.3201619/*
+fasterq.tmp.n26.*
