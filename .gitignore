@@ -5,3 +5,4 @@
 /data
 /slurm_outputs
 fasterq.tmp.n26.*
+/output/*

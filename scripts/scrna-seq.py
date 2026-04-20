@@ -1,4 +1,4 @@
-
+# All mitochondrial QC was commented out, since the reference does not have mitochondrial genes
 import os
 from random import seed
 import scanpy as sc
@@ -11,6 +11,7 @@ from scipy.stats import median_abs_deviation
 import numpy as np
 import warnings
 from matplotlib.lines import Line2D
+from scipy.stats import pointbiserialr
 warnings.filterwarnings('ignore')
 seed(5042026)
 
@@ -19,7 +20,7 @@ PROJECT_DIR = "/work/TALC/mdsc519_2026w/students/jamie/Dragon"
 CK_DIR = os.path.join(PROJECT_DIR, "data", "output", "cellranger", "SRR24952454")
 POST_DIR = os.path.join(PROJECT_DIR, "data", "output", "cellranger", "SRR24952453")
 CELLRANGER_OUTDIR = "/work/TALC/mdsc519_2026w/students/jamie/Dragon/data/output/cellranger"
-FIG_OUTPUTS_DIR = os.path.join(PROJECT_DIR, "output", "sc")
+FIG_OUTPUTS_DIR = os.path.join(PROJECT_DIR, "output","MAD3PC20")
 
 # Configure scanpy settings
 sc.settings.figdir = os.path.join(FIG_OUTPUTS_DIR)
@@ -62,10 +63,9 @@ def per_sample_qc(adata, sample_name):
     print(f"\nQC metrics for sample {sample_name}:")
     print(f"  Number of cells: {adata.n_obs}")
     print(f"  Number of genes: {adata.n_vars}")
-    adata.var["mt"] = adata.var_names.str.startswith(("MT-","mt-"))
+    # adata.var["mt"] = adata.var_names.str.startswith(("MT-","mt-"))
     sc.pp.calculate_qc_metrics(
         adata,
-        qc_vars=["mt"],
         log1p=True,
         inplace=True,
         percent_top=[20, 50, 100]
@@ -74,7 +74,8 @@ def per_sample_qc(adata, sample_name):
     with plt.rc_context({"figure.figsize": (15, 6)}):
         sc.pl.violin(
             adata, 
-            ["total_counts", "n_genes_by_counts", "pct_counts_mt"],
+            # ["total_counts", "n_genes_by_counts", "pct_counts_mt"],
+            ["total_counts", "n_genes_by_counts"],
             # log=True,
             jitter=0.4,
             multi_panel=True,
@@ -88,7 +89,7 @@ def per_sample_qc(adata, sample_name):
         plt.xlabel("", fontsize=12)
         
     sc.pl.scatter(adata, x="total_counts", y="n_genes_by_counts", save=f"_total_counts_vs_n_genes_{sample_name}.png")
-    sc.pl.scatter(adata, x="total_counts", y="pct_counts_mt", save=f"_total_counts_vs_pct_counts_mt_{sample_name}.png")
+    # sc.pl.scatter(adata, x="total_counts", y="pct_counts_mt", save=f"_total_counts_vs_pct_counts_mt_{sample_name}.png")
     
     # print(f"Figures saved for sample {sample_name} QC metrics.")
     return adata
@@ -116,7 +117,8 @@ def per_sample_filtering(adata, sample_name, method="iqr", multiplier=1.5):
     filtered= adata.copy()
     # IQR
     if method == "iqr":
-        for metric in ["total_counts", "n_genes_by_counts", "pct_counts_mt"]:
+        # for metric in ["total_counts", "n_genes_by_counts", "pct_counts_mt"]:
+        for metric in ["total_counts", "n_genes_by_counts"]:
             lower_bound, upper_bound = iqr_bounds(filtered.obs[metric], multiplier)
             # print(f"  {metric}: [{lower_bound:.3f}, {upper_bound:.3f}]")
             filtered = filtered[
@@ -126,31 +128,48 @@ def per_sample_filtering(adata, sample_name, method="iqr", multiplier=1.5):
         # print(f"  Filtered number of cells: {filtered.n_obs}")
         return filtered
     # 
-    # more systematic approach based on MAD (Median Absolute Deviation) to identify outliers in the QC metrics and filter out low-quality cells.
-    for metric in ["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_in_top_20_genes"]:
-        M = filtered.obs[metric]
-        median = np.median(M)
-        mad = median_abs_deviation(M)
-        lower = median - 5 * mad
-        upper = median + 5 * mad
-        print(f"  {metric}: [{lower:.3f}, {upper:.3f}]")
+    elif isinstance(multiplier, (int, float)):
+        # more systematic approach based on MAD (Median Absolute Deviation) to identify outliers in the QC metrics and filter out low-quality cells.
+        for metric in ["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_in_top_20_genes"]:
+            M = filtered.obs[metric]
+            median = np.median(M)
+            mad = median_abs_deviation(M)
+            lower = median - multiplier * mad
+            upper = median + multiplier * mad
+            print(f"  {metric}: [{lower:.3f}, {upper:.3f}]")
 
         filtered.obs["outlier"] = (
-            is_outlier(filtered, "log1p_total_counts", 5)
-            | is_outlier(filtered, "log1p_n_genes_by_counts", 5)
-            | is_outlier(filtered, "pct_counts_in_top_20_genes", 5)
+            is_outlier(filtered, "log1p_total_counts", multiplier)
+            | is_outlier(filtered, "log1p_n_genes_by_counts", multiplier)
+            | is_outlier(filtered, "pct_counts_in_top_20_genes", multiplier)
         )
         
-        print(f"  Outliers based on total counts, n_genes_by_counts, and pct_counts_in_top_20_genes: {filtered.obs.outlier.value_counts()}")
-        
-        filtered.obs["mt_outlier"] = is_outlier(filtered, "pct_counts_mt", 3) | (
-            filtered.obs["pct_counts_mt"] > 8
+    elif isinstance(multiplier, list):
+        for pos, metric in enumerate(["log1p_total_counts", "log1p_n_genes_by_counts", "pct_counts_in_top_20_genes"]):
+            M = filtered.obs[metric]
+            median = np.median(M)
+            mad = median_abs_deviation(M)
+            lower = median - multiplier[pos] * mad
+            upper = median + multiplier[pos] * mad
+            print(f"  {metric}: [{lower:.3f}, {upper:.3f}]")
+
+        filtered.obs["outlier"] = (
+            is_outlier(filtered, "log1p_total_counts", multiplier[0])
+            | is_outlier(filtered, "log1p_n_genes_by_counts", multiplier[1])
+            | is_outlier(filtered, "pct_counts_in_top_20_genes", multiplier[2])
         )
-        print(f"  Outliers based on pct_counts_mt: {filtered.obs.mt_outlier.value_counts()}")
         
-        filtered = filtered[~filtered.obs.outlier & ~filtered.obs.mt_outlier].copy()
-        print(f"  Filtered number of cells ({sample_name}): {filtered.n_obs}")
-        return filtered
+    print(f"  Outliers based on total counts, n_genes_by_counts, and pct_counts_in_top_20_genes: {filtered.obs.outlier.value_counts()}")
+        
+        # filtered.obs["mt_outlier"] = is_outlier(filtered, "pct_counts_mt", 3) | (
+        #     filtered.obs["pct_counts_mt"] > 8
+        # )                   
+        # print(f"  Outliers based on pct_counts_mt: {filtered.obs.mt_outlier.value_counts()}")
+        
+        # filtered = filtered[~filtered.obs.outlier & ~filtered.obs.mt_outlier].copy()
+    filtered = filtered[~filtered.obs.outlier].copy()
+    print(f"  Filtered number of cells ({sample_name}): {filtered.n_obs}")
+    return filtered
     
 # scrublet to identify doublets - not sure if we have to do this since we already have the cellranger output, which should have already filtered out doublets. But could be worth trying to see if we can identify any additional doublets that were missed by cellranger.
 def identify_doublets(adata, expected_doublet_rate=0.06, sample_name=None, umap=False):
@@ -254,8 +273,10 @@ for sample, srr_id in samples.items():
     adata = per_sample_qc(adata, sample)
     
     print(f"\nCells before filtering: {adata.n_obs}")
-    adata = per_sample_filtering(adata, sample, multiplier=1.5)
-    print(f"Cells after filtering: {adata.n_obs}") 
+    # Use 3 for more stringent filtering, 1.5 for less stringent filtering. The paper does not specify the exact multiplier used for the IQR method, so we can experiment with different values to see how it affects the number of cells retained and the downstream analyses.
+    # adata = per_sample_filtering(adata, sample, method="IQR", multiplier=3) 
+    # MAD filtering. Use multiplier of 3 for less deviation from the median, 5 for more deviation. 
+    adata = per_sample_filtering(adata, sample, method="MAD", multiplier=3)
     adata.obs["filtered"] = True
     
     expected_doublet_rate = get_expected_doublet_rate(adata.n_obs)
@@ -275,6 +296,7 @@ sc.pp.log1p(adata)
 sc.pp.highly_variable_genes(
     adata, # use the filtered adata?  to identify highly variable genes, as the normalization step does not change the variance of the genes, so we can use the original data to identify highly variable genes. (Get a warning when using normalized data) - flavor seurat expects normalized data, seurat_v3 expects raw counts data
     flavor="seurat",
+    batch_key="condition",
     # span=0.5, 
     # n_top_genes=200,
     # inplace=False
@@ -309,10 +331,27 @@ plt.tight_layout()
 plt.savefig(f"{FIG_OUTPUTS_DIR}/pca_elbow_plot.png", bbox_inches='tight')
 plt.close()
 
-n_PCs = 5 # choose the number of PCs to use for downstream analyses
+n_PCs = 20 # choose the number of PCs to use for downstream analyses
 
+# Investigate PC - correlation with condition and QC metrics
+
+pcs = adata.obsm["X_pca"]
+cond = (adata.obs["condition"] == "post").astype(int).values
+
+print("Correlation of PCs with condition (point biserial correlation):")
+for i in range(10):
+    r, p = pointbiserialr(cond, pcs[:, i])
+    print(f"PC{i+1}: r={r:.3f}, p={p:.3e}")
+
+for col in ["total_counts", "n_genes_by_counts", "pct_counts_in_top_20_genes"]:
+    print(f"\nCorrelation with {col}")
+    vals = adata.obs[col].values
+    for i in range(10):
+        r = np.corrcoef(vals, pcs[:, i])[0, 1]
+        print(f"PC{i+1}: r={r:.3f}")
+        
 # Construct kNN graph on pca and perform clustering using the Leiden algorithm
-sc.pp.neighbors(adata, n_neighbors=10, n_pcs=n_PCs)
+sc.pp.neighbors(adata, n_neighbors=15, n_pcs=n_PCs)
 resolutions = [0.25, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 res_table = []
 for res in resolutions:
@@ -330,7 +369,7 @@ for res in resolutions:
 print(f"\nResolution table: \n{pd.DataFrame(res_table)}")
 
 # Choose resolution and compute UMAP
-chosen_res = 0.50
+chosen_res = 1.0
 groups = adata.obs[f"leiden_{chosen_res}"]
 print(f"Resolution: {chosen_res}, Clusters: {groups.nunique()}")
 
@@ -348,7 +387,7 @@ sc.tl.umap(adata)
 #         save="_clustering9.png")
 # Plot UMAP colored by different metrics
 sc.pl.umap(adata, color="total_counts", frameon=False, save="_total_counts.png")
-sc.pl.umap(adata, color="pct_counts_mt", frameon=False, save="_pct_counts_mt.png")
+# sc.pl.umap(adata, color="pct_counts_mt", frameon=False, save="_pct_counts_mt.png")
 sc.pl.umap(adata, color=f"leiden_{chosen_res}", alpha=0.5, frameon=False, legend_loc="on data", legend_fontsize=12, title=f"UMAP colored by Leiden clusters (resolution={chosen_res})", save=".png")
 
 # give cell cluster labels to the adata_markers object for marker discovery
@@ -623,9 +662,10 @@ sc.pl.umap(
     frameon=False, 
     legend_loc="on data", 
     legend_fontsize=12, 
-    title=f"Post condition",
+    title=f"CK condition",
     ax=axs[1],
     show=False
 )
 
-sc.pl.plot(show=False).figure.savefig(f"{FIG_OUTPUTS_DIR}/umap_comparison.png", bbox_inches='tight', dpi=150)
+plt.savefig(f"{FIG_OUTPUTS_DIR}/umap_comparison.png", bbox_inches='tight', dpi=150)
+plt.close()

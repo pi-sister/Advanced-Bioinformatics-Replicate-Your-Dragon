@@ -12,4 +12,6 @@
 
 source /home/jamie.macdonald2/miniforge3/bin/activate /work/TALC/mdsc519_2026w/students/jamie/Dragon/Env_files
 
-python /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/scrna-seq.py
+# python /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/scrna-seq.py
+
+python /work/TALC/mdsc519_2026w/students/jamie/Dragon/scripts/scrna-seq_by_condition.py
