@@ -17,7 +17,7 @@ This was the final project completed for MDSC 519: Advanced Bioinformatics. It i
 
 1. Li X, Li B, Gu S, Pang X, Mason P, Yuan J, et al. Single-cell and spatial RNA sequencing reveal the spatiotemporal trajectories of fruit senescence. Nat Commun. 2024 Apr 10;15(1):3108.
 
-## Method
+## Methods
   
 
 This project analyzes single-cell RNA-seq and spatial transcriptomics (Visium) data from dragon fruit (pitaya) pericarp tissue, comparing control (**ck**) and treated (**post**) conditions using two public SRA BioProjects (`PRJNA974579`, `PRJNA1002459`). Raw sequencing data were retrieved with **NCBI Entrez Direct** (`esearch`/`efetch`) and the **SRA Toolkit** (`prefetch`, `fasterq-dump`), then compressed and renamed to 10x conventions with `pigz`. A custom reference index was built for the `PitayaGenomic` assembly using **Cell Ranger** (`mkref`, v8.0.1), and reads were aligned/counted per sample with **Cell Ranger count** (scRNA-seq) and **Space Ranger count** (v4.0.1, Visium spatial sample).
